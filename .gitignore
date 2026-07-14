@@ -1,0 +1,15 @@
+node_modules/
+dist/
+artifacts/
+cache/
+coverage/
+.env
+.env.local
+typechain-types/
+*.log
+*.tsbuildinfo
+.DS_Store
+work/
+outputs/
+vite.config.js
+vite.config.d.ts
