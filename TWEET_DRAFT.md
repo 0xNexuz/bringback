@@ -47,7 +47,7 @@ Built solo for the BuildAnything Spark hackathon.
 
 Live app: https://bringback-ebon.vercel.app
 Source: https://github.com/0xNexuz/bringback
-Contract: [MONAD_TESTNET_CONTRACT]
+Contract: 0xC8c563F8e2fe16ce84669e2f4BDBC186f1eB1c5c
 ```
 
 ## Suggested media
@@ -64,7 +64,7 @@ BringBack web app on Monad. A bright green QR lending tag for a USB-C charger si
 
 ## Before posting
 
-- Replace `[MONAD_TESTNET_CONTRACT]` with the verified public address.
+- Confirm the contract link opens on Monadscan before posting.
 - Confirm the live app completes both Stuff and Money flows.
 - Upload captions with the demo video.
 - Add the final social post URL to the Spark submission.

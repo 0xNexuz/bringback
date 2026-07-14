@@ -2,7 +2,7 @@
 
 **What you lend should come back.**
 
-[Live web app](https://bringback-ebon.vercel.app) | [GitHub repository](https://github.com/0xNexuz/bringback) | [Demo script](DEMO_SCRIPT.md)
+[Live web app](https://bringback-ebon.vercel.app) | [Testnet contract](https://testnet.monadscan.com/address/0xC8c563F8e2fe16ce84669e2f4BDBC186f1eB1c5c) | [GitHub repository](https://github.com/0xNexuz/bringback) | [Demo script](DEMO_SCRIPT.md)
 
 BringBack is an onchain lending desk for informal loans between people who already know each other. It handles two common situations without pretending they are the same problem:
 
@@ -185,7 +185,7 @@ Client configuration:
 ```dotenv
 VITE_CONTRACT_ADDRESS=0xDEPLOYED_BORROW_BOND_ADDRESS
 VITE_CHAIN_ID=10143
-VITE_RPC_URL=https://rpc.testnet.monad.xyz
+VITE_RPC_URL=https://rpc.ankr.com/monad_testnet
 ```
 
 If `VITE_CONTRACT_ADDRESS` is absent, the site intentionally displays a builder-preview notice and disables live contract actions. It does not replace them with placeholder successes.
@@ -208,10 +208,10 @@ After deployment, set the public address as `VITE_CONTRACT_ADDRESS`, rerun the t
 |---|---|
 | GitHub repository | Live: [`0xNexuz/bringback`](https://github.com/0xNexuz/bringback) |
 | Vercel project | Live: [`bringback-ebon.vercel.app`](https://bringback-ebon.vercel.app) |
-| Monad Testnet contract | Not deployed from this workspace yet |
+| Monad Testnet contract | Live: [`0xC8c5...1c5c`](https://testnet.monadscan.com/address/0xC8c563F8e2fe16ce84669e2f4BDBC186f1eB1c5c) |
 | Monad Mainnet contract | Not deployed |
 
-The hosted site is currently an honest builder preview: the interface and direct QR routes are deployed, but contract actions remain disabled until `VITE_CONTRACT_ADDRESS` is set to a public Monad deployment.
+The hosted app is configured for Monad Testnet chain ID `10143` and the deployed `BorrowBond` contract at `0xC8c563F8e2fe16ce84669e2f4BDBC186f1eB1c5c`. Contract bytecode and the initial zero-item state were read back from the network after deployment. Connect an injected wallet on Monad Testnet to create and complete real Stuff and Money flows.
 
 ## Demo
 

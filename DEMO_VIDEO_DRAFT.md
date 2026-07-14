@@ -87,7 +87,7 @@ This is the edit/storyboard draft. The exact recording narration is in [`DEMO_SC
 BRINGBACK
 https://bringback-ebon.vercel.app
 github.com/0xNexuz/bringback
-[MONAD_TESTNET_CONTRACT]
+0xC8c563F8e2fe16ce84669e2f4BDBC186f1eB1c5c
 ```
 
 ## Editing direction
