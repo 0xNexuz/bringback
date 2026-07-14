@@ -1,92 +1,152 @@
 # BringBack
 
-**Lend your stuff without chasing people.**
+**What you lend should come back.**
 
-BringBack is one lending desk for the **stuff** and **money** that leave your hands. Physical items become QR-tagged loans backed by a refundable MON bond; personal money loans become funded onchain offers with a named borrower, due date, and permanent repayment receipt.
+BringBack is an onchain lending desk for informal loans between people who already know each other. It handles two common situations without pretending they are the same problem:
 
-Built as a new solo project for the **BuildAnything Spark hackathon** on Monad.
+- **Stuff** uses a refundable MON bond for physical items such as chargers, books, tools, clothes, controllers, and power banks.
+- **Money** uses a funded, zero-interest offer that only one named wallet can accept and repay.
 
-## The problem
+BringBack was built as a new solo project for the BuildAnything Spark hackathon on Monad.
 
-Small things are easy to lend and strangely hard to get back. The same is true of informal money loans: both people forget the amount or deadline, reminders become awkward, and “I’ll pay you tomorrow” becomes impossible to track clearly.
+![BringBack hero](docs/screenshots/hero.png)
 
-## The solution
+## Why BringBack exists
 
-BringBack has two deliberately distinct modes:
+Small personal loans are easy to make and awkward to follow up on. Friends forget who has an item, how much money was borrowed, or when it should come back. The lender either keeps sending reminders or quietly accepts the loss.
 
-- **Stuff:** The lender names any physical item, chooses a MON bond, and gets a shareable QR code. The borrower locks the bond. A confirmed return refunds it immediately; an overdue lender can claim it.
-- **Money:** The lender funds a zero-interest offer for one named wallet. Only that borrower can accept and receive the principal. The borrower can later repay the exact amount directly to the lender, even after the deadline. Unaccepted offers remain cancelable.
+BringBack creates one shared, inspectable source of truth:
 
-There is no admin withdrawal and no BringBack custody account. The contract holds only active return bonds and money offers that have not yet been accepted.
+- who lent and who borrowed;
+- what item or amount is involved;
+- the agreed return window;
+- whether the loan is available, active, overdue, repaid, returned, retired, or cancelled;
+- where the MON is currently held.
 
-## Why this needs to be onchain
+The blockchain is used for custody and settlement, not decoration. The web interface reads live contract state and does not generate fake loan records.
 
-The onchain component is the product rather than a decorative record:
+## What is built
 
-- the exact bond is enforced by the contract;
-- neither party nor the interface can secretly change the terms of an active loan;
-- a successful return sends the bond directly back to the borrower;
-- every checkout, return, and overdue claim is independently inspectable;
-- money cannot leave an offer until the named borrower accepts it, and repayments go directly to the original lender;
-- the web client renders contract state instead of placeholder loan data.
+### Stuff mode
 
-BringBack is an accountability tool for people who already know one another. A blockchain cannot determine whether a physical item was actually returned, so the lender remains the return oracle. It is not positioned as trustless physical-goods arbitration.
-
-## Contract state
-
-An item moves through three deliberately small states:
+1. A lender registers an item name, return-bond amount, and loan duration.
+2. BringBack produces a direct `/item/{id}` link and QR code.
+3. A different wallet scans the tag and locks the exact MON bond.
+4. The contract records the borrower and return deadline.
+5. When the item comes back, the lender confirms the return and the contract refunds the borrower.
+6. If the deadline has passed, the lender may claim the bond instead. Claiming retires the item.
+7. A successfully returned item becomes available and can be lent again.
 
 ```text
-AVAILABLE ── borrow + exact bond ──▶ BORROWED
-    ▲                                  │
-    │                                  ├── lender confirms return ──▶ AVAILABLE
-    │                                  │
-    └──── can be borrowed again        └── overdue claim ──▶ RETIRED
+AVAILABLE -> BORROWED -> AVAILABLE   (lender confirms return)
+                      -> RETIRED     (lender claims overdue bond)
+
+AVAILABLE -> RETIRED                 (lender manually retires tag)
 ```
 
-Contract actions:
+![Stuff lending desk](docs/screenshots/stuff-dashboard.png)
 
-| Function | Who calls it | Result |
+### Money mode
+
+1. A lender names a specific borrower wallet, enters a memo, amount, and repayment window.
+2. The lender funds the offer with native MON when creating it.
+3. The principal stays inside `BorrowBond` while the offer is waiting.
+4. Only the named borrower can accept and receive the principal.
+5. Acceptance starts the repayment deadline.
+6. The borrower repays the exact principal directly through the contract to the original lender.
+7. The borrower may still repay after the deadline; BringBack shows the loan as overdue until that happens.
+8. The lender may cancel and recover an offer only before it has been accepted.
+
+```text
+OFFERED -> ACTIVE -> REPAID
+        -> CANCELLED
+```
+
+There is intentionally no interest, liquidation, partial repayment, or tradable debt. This is a small personal-loan record, not a DeFi lending market.
+
+![Money lending desk](docs/screenshots/money-dashboard.png)
+
+## Why the contract matters
+
+The contract enforces the parts that should not depend on the interface:
+
+- item borrowers must lock the exact configured bond;
+- lenders cannot borrow their own items;
+- item refunds return directly to the recorded borrower;
+- an overdue item bond can only be claimed by its lender;
+- money offers are fully funded before they appear;
+- only the named borrower can accept or repay a money loan;
+- repayments must equal the original principal;
+- only an unaccepted money offer can be cancelled;
+- there is no owner, upgrade authority, admin withdrawal, or platform balance.
+
+## Honest limitations
+
+BringBack is an accountability tool for people who already know one another.
+
+- A blockchain cannot verify whether a physical item was returned. The lender is the physical-return oracle.
+- Stuff mode trusts the lender to confirm an honest return.
+- Money loans are uncollateralized. The contract records an overdue debt but cannot force repayment.
+- Only native MON is supported; ERC-20 tokens are not implemented.
+- There are no push notifications, identity profiles, dispute judges, interest, late fees, partial payments, or loan transfers.
+- The contract has automated tests but has not received a professional security audit. Bond and loan values should remain small.
+
+## Contract interface
+
+| Function | Caller | Effect |
 |---|---|---|
-| `createItem` | Lender | Registers the name, bond, and loan duration |
-| `borrowItem` | Borrower | Locks the exact native MON bond |
-| `confirmReturn` | Lender | Refunds the borrower and makes the item reusable |
-| `claimOverdueBond` | Lender | Pays the overdue bond to the lender and retires the item |
-| `retireItem` | Lender | Retires an available item without moving funds |
-| `createMoneyLoan` | Lender | Funds a cancelable offer for one borrower |
-| `acceptMoneyLoan` | Named borrower | Receives the principal and starts the deadline |
-| `repayMoneyLoan` | Borrower | Repays the exact principal directly to the lender |
+| `createItem` | Lender | Registers an available physical item |
+| `borrowItem` | Borrower | Locks the exact return bond and starts its deadline |
+| `confirmReturn` | Lender | Refunds the bond and makes the item reusable |
+| `claimOverdueBond` | Lender | Claims an overdue bond and retires the item |
+| `retireItem` | Lender | Retires an available item |
+| `createMoneyLoan` | Lender | Funds an offer for one named borrower |
+| `acceptMoneyLoan` | Named borrower | Receives the principal and starts its deadline |
+| `repayMoneyLoan` | Borrower | Repays the exact principal to the lender |
 | `cancelMoneyLoan` | Lender | Recovers an offer that has not been accepted |
 
-## Current deployments
+All native-MON payouts follow checks-effects-interactions and use a reentrancy guard. Failed transfers revert the entire state change.
 
-| Network | Chain ID | Contract |
-|---|---:|---|
-| Monad Testnet | 10143 | _Deploy and add address_ |
-| Monad Mainnet | 143 | _Optional after testnet QA_ |
+## Web application
 
-## Stack
+The React client implements:
 
-- Solidity 0.8.28
-- Hardhat and Chai
-- React 18 and TypeScript
-- Vite
-- viem wallet/contract integration
-- `qrcode.react`
+- injected-wallet connection;
+- Monad Testnet/Mainnet network switching and wallet network addition;
+- Stuff and Money dashboard modes;
+- lender and borrower views for both modes;
+- live reads from `BorrowBond`;
+- transaction submission and receipt waiting;
+- explorer links for submitted transactions;
+- responsive desktop and mobile layouts;
+- QR codes and direct routes for physical-item borrowing;
+- Vercel and Netlify SPA rewrites so direct item links resolve correctly.
 
-## Local setup
+![BringBack mobile layout](docs/screenshots/mobile.png)
 
-Requirements: Node.js 20+ and a browser wallet such as MetaMask.
+## Repository structure
 
-```bash
-npm install
-cp .env.example .env
-npm run dev
+```text
+contracts/BorrowBond.sol     Stuff and money loan state machine
+test/BorrowBond.test.cjs     Nine Hardhat contract tests
+scripts/deploy.cjs           Monad deployment script
+src/App.tsx                  Wallet flows, dashboards, forms, and QR route
+src/lib/contract.ts          Typed contract ABI and client data models
+src/lib/chain.ts             Monad network and public client configuration
+src/styles.css               Responsive visual system
+DEMO_SCRIPT.md               Standalone sub-three-minute recording script
 ```
 
-The interface can be previewed before deployment. It clearly displays a builder notice until `VITE_CONTRACT_ADDRESS` is configured; it does not substitute fake item records.
+## Technology
 
-### Verification commands
+- Solidity 0.8.28
+- Hardhat, Ethers, and Chai
+- React 18 and TypeScript
+- Vite
+- viem
+- qrcode.react
+
+## Verification
 
 ```bash
 npm run contract:test
@@ -94,90 +154,62 @@ npm run typecheck
 npm run build
 ```
 
-The current suite covers:
+The nine contract tests cover:
 
 - item creation and lender indexing;
-- exact bond custody;
+- exact item-bond custody;
 - self-borrow and incorrect-bond rejection;
 - borrower refunds and item reuse;
 - overdue timing and lender authorization;
-- invalid input and item retirement.
-- funded money offers, designated-borrower acceptance, exact repayment, and cancellation.
+- invalid item input and retirement;
+- funded money offers and designated-borrower acceptance;
+- exact money repayment;
+- cancellation of unaccepted money offers.
 
-## Deploy to Monad Testnet
+## Local development
 
-Use a disposable development wallet. Never use a wallet that holds meaningful funds and never commit a private key.
+Requirements: Node.js 20+ and an injected browser wallet such as MetaMask.
 
-1. Add Monad Testnet and obtain test MON.
-2. In the shell session used only for deployment, expose the private key as an environment variable.
-3. Deploy the contract:
+```bash
+npm install
+cp .env.example .env
+npm run dev
+```
 
-PowerShell:
+Client configuration:
+
+```dotenv
+VITE_CONTRACT_ADDRESS=0xDEPLOYED_BORROW_BOND_ADDRESS
+VITE_CHAIN_ID=10143
+VITE_RPC_URL=https://rpc.testnet.monad.xyz
+```
+
+If `VITE_CONTRACT_ADDRESS` is absent, the site intentionally displays a builder-preview notice and disables live contract actions. It does not replace them with placeholder successes.
+
+## Deploy the contract
+
+Use a disposable development wallet and never commit or share its private key.
 
 ```powershell
-$env:DEPLOYER_PRIVATE_KEY="0xYOUR_DISPOSABLE_KEY"
+$env:DEPLOYER_PRIVATE_KEY="0xYOUR_DISPOSABLE_DEVELOPMENT_KEY"
 npm run contract:deploy:testnet
 Remove-Item Env:DEPLOYER_PRIVATE_KEY
 ```
 
-4. Copy the emitted contract address into `.env`:
+After deployment, set the public address as `VITE_CONTRACT_ADDRESS`, rerun the two-wallet flows, and redeploy the web client.
 
-```dotenv
-VITE_CONTRACT_ADDRESS=0xDEPLOYED_ADDRESS
-VITE_CHAIN_ID=10143
-VITE_RPC_URL=https://rpc.testnet.monad.xyz
-```
+## Deployment status
 
-5. Restart the development server and run a full two-wallet checkout/return test.
-6. Add the contract address to the deployment table above.
+| Component | Status |
+|---|---|
+| GitHub repository | Publishing as `0xNexuz/bringback` |
+| Vercel project | Publishing as `bringback` |
+| Monad Testnet contract | Not deployed from this workspace yet |
+| Monad Mainnet contract | Not deployed |
 
-To deploy to mainnet, first complete testnet QA, fund the disposable deployer with a minimal amount of real MON, change the client chain variables to `143` and `https://rpc.monad.xyz`, then run `npm run contract:deploy:mainnet`.
+## Demo
 
-## Hosted deployment
-
-The repository includes a Vercel SPA rewrite and a Netlify redirect so QR routes such as `/item/42` resolve to the React application on direct visits.
-
-Set these variables in the host dashboard:
-
-```dotenv
-VITE_CONTRACT_ADDRESS=0xDEPLOYED_ADDRESS
-VITE_CHAIN_ID=10143
-VITE_RPC_URL=https://rpc.testnet.monad.xyz
-```
-
-Build command: `npm run build`  
-Output directory: `dist`
-
-## Three-minute demo
-
-1. **0:00–0:15** — Hold up a real charger and explain the personal problem.
-2. **0:15–0:45** — Connect the lender wallet and create its item tag.
-3. **0:45–1:10** — Open the QR code and scan it using a second device.
-4. **1:10–1:40** — Lock the bond with the borrower wallet.
-5. **1:40–2:05** — Show the live borrower, deadline, and explorer transaction.
-6. **2:05–2:35** — Return the charger and confirm the return as the lender.
-7. **2:35–2:50** — Show the refunded borrower balance and reusable item.
-8. **2:50–3:00** — “BringBack: lend your stuff without chasing people.”
-
-Do not simulate the wallet interactions in the recording. Use two real development wallets and show both explorer links.
-
-## Submission copy
-
-**Name:** BringBack
-
-**Description:** One onchain lending desk for the stuff and money friends need to bring back.
-
-**Problem:** I lend chargers and other small items to friends, and I also cover meals, transport, and small expenses. We forget who has what, what is owed, and when it should come back. Following up becomes awkward.
-
-**Solution:** BringBack separates physical and money loans into two honest onchain flows. Physical items get QR checkout tags and refundable return bonds. Money loans are funded offers that only the named borrower can accept, with a visible deadline and direct onchain repayment. One dashboard shows what I lent, what I borrowed, what I am owed, and what I owe.
-
-## Security notes
-
-- Checks-effects-interactions and a reentrancy guard protect every bond, principal, refund, and repayment transfer.
-- Contract calls use custom errors and exact-value checks.
-- There is no owner, upgrade mechanism, admin balance, or emergency withdrawal.
-- Native MON transfers to contracts that reject funds will revert safely.
-- The contract has hackathon-level tests but has not undergone a professional audit. Keep bond values small.
+The complete shot list, spoken narration, wallet preparation, and timing are kept separately in [`DEMO_SCRIPT.md`](DEMO_SCRIPT.md).
 
 ## License
 
