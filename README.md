@@ -2,24 +2,22 @@
 
 **Lend your stuff without chasing people.**
 
-BringBack turns chargers, books, power banks, controllers, and other everyday items into QR-tagged loans backed by a small, refundable MON bond.
+BringBack is one lending desk for the **stuff** and **money** that leave your hands. Physical items become QR-tagged loans backed by a refundable MON bond; personal money loans become funded onchain offers with a named borrower, due date, and permanent repayment receipt.
 
 Built as a new solo project for the **BuildAnything Spark hackathon** on Monad.
 
 ## The problem
 
-Small things are easy to lend and strangely hard to get back. Both people forget who has what, reminders become awkward, and inexpensive-but-essential items quietly disappear.
+Small things are easy to lend and strangely hard to get back. The same is true of informal money loans: both people forget the amount or deadline, reminders become awkward, and “I’ll pay you tomorrow” becomes impossible to track clearly.
 
 ## The solution
 
-1. The lender names an item, chooses a MON bond, and sets a return window.
-2. BringBack creates a shareable QR code for that item.
-3. The borrower scans it and locks the exact bond in `BorrowBond.sol`.
-4. When the item comes back, the lender confirms the return.
-5. The contract refunds the borrower's wallet immediately.
-6. If the deadline passes, the lender can claim the bond and the item is retired.
+BringBack has two deliberately distinct modes:
 
-There is no admin withdrawal and no BringBack custody account. The contract holds only active return bonds.
+- **Stuff:** The lender names any physical item, chooses a MON bond, and gets a shareable QR code. The borrower locks the bond. A confirmed return refunds it immediately; an overdue lender can claim it.
+- **Money:** The lender funds a zero-interest offer for one named wallet. Only that borrower can accept and receive the principal. The borrower can later repay the exact amount directly to the lender, even after the deadline. Unaccepted offers remain cancelable.
+
+There is no admin withdrawal and no BringBack custody account. The contract holds only active return bonds and money offers that have not yet been accepted.
 
 ## Why this needs to be onchain
 
@@ -29,6 +27,7 @@ The onchain component is the product rather than a decorative record:
 - neither party nor the interface can secretly change the terms of an active loan;
 - a successful return sends the bond directly back to the borrower;
 - every checkout, return, and overdue claim is independently inspectable;
+- money cannot leave an offer until the named borrower accepts it, and repayments go directly to the original lender;
 - the web client renders contract state instead of placeholder loan data.
 
 BringBack is an accountability tool for people who already know one another. A blockchain cannot determine whether a physical item was actually returned, so the lender remains the return oracle. It is not positioned as trustless physical-goods arbitration.
@@ -54,6 +53,10 @@ Contract actions:
 | `confirmReturn` | Lender | Refunds the borrower and makes the item reusable |
 | `claimOverdueBond` | Lender | Pays the overdue bond to the lender and retires the item |
 | `retireItem` | Lender | Retires an available item without moving funds |
+| `createMoneyLoan` | Lender | Funds a cancelable offer for one borrower |
+| `acceptMoneyLoan` | Named borrower | Receives the principal and starts the deadline |
+| `repayMoneyLoan` | Borrower | Repays the exact principal directly to the lender |
+| `cancelMoneyLoan` | Lender | Recovers an offer that has not been accepted |
 
 ## Current deployments
 
@@ -99,6 +102,7 @@ The current suite covers:
 - borrower refunds and item reuse;
 - overdue timing and lender authorization;
 - invalid input and item retirement.
+- funded money offers, designated-borrower acceptance, exact repayment, and cancellation.
 
 ## Deploy to Monad Testnet
 
@@ -161,15 +165,15 @@ Do not simulate the wallet interactions in the recording. Use two real developme
 
 **Name:** BringBack
 
-**Description:** QR-tagged loans with refundable onchain return bonds.
+**Description:** One onchain lending desk for the stuff and money friends need to bring back.
 
-**Problem:** I lend chargers, power banks, books, and other small items to friends. We both forget who has what, and I end up repeatedly asking for my things back.
+**Problem:** I lend chargers and other small items to friends, and I also cover meals, transport, and small expenses. We forget who has what, what is owed, and when it should come back. Following up becomes awkward.
 
-**Solution:** BringBack creates a QR checkout tag for anything I lend. The borrower locks a small MON bond in a Monad smart contract. When the item is returned, the contract immediately refunds the bond. If it remains overdue, the lender can claim the bond. This creates a lightweight incentive to return borrowed items without subscriptions, paperwork, or an intermediary.
+**Solution:** BringBack separates physical and money loans into two honest onchain flows. Physical items get QR checkout tags and refundable return bonds. Money loans are funded offers that only the named borrower can accept, with a visible deadline and direct onchain repayment. One dashboard shows what I lent, what I borrowed, what I am owed, and what I owe.
 
 ## Security notes
 
-- Checks-effects-interactions and a reentrancy guard protect bond payouts.
+- Checks-effects-interactions and a reentrancy guard protect every bond, principal, refund, and repayment transfer.
 - Contract calls use custom errors and exact-value checks.
 - There is no owner, upgrade mechanism, admin balance, or emergency withdrawal.
 - Native MON transfers to contracts that reject funds will revert safely.

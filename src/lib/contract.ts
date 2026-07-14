@@ -18,6 +18,17 @@ const itemComponents = [
   { name: "status", type: "uint8" },
 ] as const;
 
+const moneyLoanComponents = [
+  { name: "id", type: "uint256" },
+  { name: "lender", type: "address" },
+  { name: "borrower", type: "address" },
+  { name: "memo", type: "string" },
+  { name: "amount", type: "uint256" },
+  { name: "loanDuration", type: "uint64" },
+  { name: "dueAt", type: "uint64" },
+  { name: "status", type: "uint8" },
+] as const;
+
 export const borrowBondAbi = [
   {
     type: "function",
@@ -79,6 +90,59 @@ export const borrowBondAbi = [
     inputs: [{ name: "borrower", type: "address" }],
     outputs: [{ name: "", type: "uint256[]" }],
   },
+  {
+    type: "function",
+    name: "createMoneyLoan",
+    stateMutability: "payable",
+    inputs: [
+      { name: "borrower", type: "address" },
+      { name: "memo", type: "string" },
+      { name: "loanDuration", type: "uint64" },
+    ],
+    outputs: [{ name: "loanId", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "acceptMoneyLoan",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "loanId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "repayMoneyLoan",
+    stateMutability: "payable",
+    inputs: [{ name: "loanId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "cancelMoneyLoan",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "loanId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "getMoneyLoan",
+    stateMutability: "view",
+    inputs: [{ name: "loanId", type: "uint256" }],
+    outputs: [{ name: "loan", type: "tuple", components: moneyLoanComponents }],
+  },
+  {
+    type: "function",
+    name: "getLenderMoneyLoanIds",
+    stateMutability: "view",
+    inputs: [{ name: "lender", type: "address" }],
+    outputs: [{ name: "", type: "uint256[]" }],
+  },
+  {
+    type: "function",
+    name: "getBorrowerMoneyLoanIds",
+    stateMutability: "view",
+    inputs: [{ name: "borrower", type: "address" }],
+    outputs: [{ name: "", type: "uint256[]" }],
+  },
 ] as const satisfies Abi;
 
 export type ItemStatus = 0 | 1 | 2;
@@ -93,4 +157,17 @@ export interface ContractItem {
   dueAt: bigint;
   completedLoans: number;
   status: ItemStatus;
+}
+
+export type MoneyLoanStatus = 0 | 1 | 2 | 3;
+
+export interface ContractMoneyLoan {
+  id: bigint;
+  lender: Address;
+  borrower: Address;
+  memo: string;
+  amount: bigint;
+  loanDuration: bigint;
+  dueAt: bigint;
+  status: MoneyLoanStatus;
 }

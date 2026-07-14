@@ -98,4 +98,54 @@ describe("BorrowBond", function () {
     await expect(fixture.contract.connect(fixture.borrower).borrowItem(itemId, { value: fixture.bond }))
       .to.be.revertedWithCustomError(fixture.contract, "ItemUnavailable");
   });
+
+  it("escrows a money-loan offer until the named borrower accepts", async function () {
+    const fixture = await deployFixture();
+    const amount = ethers.parseEther("0.25");
+
+    await expect(
+      fixture.contract
+        .connect(fixture.lender)
+        .createMoneyLoan(fixture.borrower.address, "Lunch and transport", fixture.duration, { value: amount }),
+    ).to.emit(fixture.contract, "MoneyLoanOffered");
+
+    expect(await ethers.provider.getBalance(await fixture.contract.getAddress())).to.equal(amount);
+    await expect(fixture.contract.connect(fixture.stranger).acceptMoneyLoan(1n))
+      .to.be.revertedWithCustomError(fixture.contract, "NotBorrower");
+    await expect(() => fixture.contract.connect(fixture.borrower).acceptMoneyLoan(1n))
+      .to.changeEtherBalances([fixture.contract, fixture.borrower], [-amount, amount]);
+
+    const loan = await fixture.contract.getMoneyLoan(1n);
+    expect(loan.status).to.equal(1n);
+    expect(loan.dueAt).to.be.greaterThan(0n);
+  });
+
+  it("returns an exact money repayment directly to the lender", async function () {
+    const fixture = await deployFixture();
+    const amount = ethers.parseEther("0.25");
+    await fixture.contract
+      .connect(fixture.lender)
+      .createMoneyLoan(fixture.borrower.address, "Lunch and transport", fixture.duration, { value: amount });
+    await fixture.contract.connect(fixture.borrower).acceptMoneyLoan(1n);
+
+    await expect(fixture.contract.connect(fixture.borrower).repayMoneyLoan(1n, { value: amount - 1n }))
+      .to.be.revertedWithCustomError(fixture.contract, "IncorrectRepayment");
+    await expect(() => fixture.contract.connect(fixture.borrower).repayMoneyLoan(1n, { value: amount }))
+      .to.changeEtherBalances([fixture.borrower, fixture.lender], [-amount, amount]);
+    expect((await fixture.contract.getMoneyLoan(1n)).status).to.equal(2n);
+  });
+
+  it("lets the lender cancel only an unaccepted money-loan offer", async function () {
+    const fixture = await deployFixture();
+    const amount = ethers.parseEther("0.25");
+    await fixture.contract
+      .connect(fixture.lender)
+      .createMoneyLoan(fixture.borrower.address, "Lunch and transport", fixture.duration, { value: amount });
+
+    await expect(fixture.contract.connect(fixture.borrower).cancelMoneyLoan(1n))
+      .to.be.revertedWithCustomError(fixture.contract, "NotLender");
+    await expect(() => fixture.contract.connect(fixture.lender).cancelMoneyLoan(1n))
+      .to.changeEtherBalances([fixture.contract, fixture.lender], [-amount, amount]);
+    expect((await fixture.contract.getMoneyLoan(1n)).status).to.equal(3n);
+  });
 });

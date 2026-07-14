@@ -11,6 +11,13 @@ contract BorrowBond {
         Retired
     }
 
+    enum MoneyLoanStatus {
+        Offered,
+        Active,
+        Repaid,
+        Cancelled
+    }
+
     struct Item {
         uint256 id;
         address lender;
@@ -23,13 +30,28 @@ contract BorrowBond {
         ItemStatus status;
     }
 
+    struct MoneyLoan {
+        uint256 id;
+        address lender;
+        address borrower;
+        string memo;
+        uint256 amount;
+        uint64 loanDuration;
+        uint64 dueAt;
+        MoneyLoanStatus status;
+    }
+
     uint64 public constant MIN_LOAN_DURATION = 60;
     uint64 public constant MAX_LOAN_DURATION = 30 days;
 
     uint256 public itemCount;
+    uint256 public moneyLoanCount;
     mapping(uint256 => Item) private items;
     mapping(address => uint256[]) private lenderItemIds;
     mapping(address => uint256[]) private borrowerItemIds;
+    mapping(uint256 => MoneyLoan) private moneyLoans;
+    mapping(address => uint256[]) private lenderMoneyLoanIds;
+    mapping(address => uint256[]) private borrowerMoneyLoanIds;
 
     uint256 private locked = 1;
 
@@ -45,6 +67,11 @@ contract BorrowBond {
     error NotOverdue();
     error TransferFailed();
     error ReentrantCall();
+    error MoneyLoanNotFound();
+    error InvalidBorrower();
+    error NotBorrower();
+    error LoanUnavailable();
+    error IncorrectRepayment();
 
     event ItemCreated(
         uint256 indexed itemId,
@@ -73,6 +100,33 @@ contract BorrowBond {
         uint256 bondAmount
     );
     event ItemRetired(uint256 indexed itemId, address indexed lender);
+    event MoneyLoanOffered(
+        uint256 indexed loanId,
+        address indexed lender,
+        address indexed borrower,
+        string memo,
+        uint256 amount,
+        uint64 loanDuration
+    );
+    event MoneyLoanAccepted(
+        uint256 indexed loanId,
+        address indexed lender,
+        address indexed borrower,
+        uint256 amount,
+        uint64 dueAt
+    );
+    event MoneyLoanRepaid(
+        uint256 indexed loanId,
+        address indexed lender,
+        address indexed borrower,
+        uint256 amount
+    );
+    event MoneyLoanCancelled(
+        uint256 indexed loanId,
+        address indexed lender,
+        address indexed borrower,
+        uint256 refundedAmount
+    );
 
     modifier nonReentrant() {
         if (locked != 1) revert ReentrantCall();
@@ -83,6 +137,11 @@ contract BorrowBond {
 
     modifier existingItem(uint256 itemId) {
         if (itemId == 0 || itemId > itemCount) revert ItemNotFound();
+        _;
+    }
+
+    modifier existingMoneyLoan(uint256 loanId) {
+        if (loanId == 0 || loanId > moneyLoanCount) revert MoneyLoanNotFound();
         _;
     }
 
@@ -173,6 +232,78 @@ contract BorrowBond {
         emit ItemRetired(itemId, msg.sender);
     }
 
+    /// @notice Funds a personal, zero-interest loan offer for one specific wallet.
+    /// @dev The principal remains cancelable by the lender until the borrower accepts.
+    function createMoneyLoan(
+        address borrower,
+        string calldata memo,
+        uint64 loanDuration
+    ) external payable returns (uint256 loanId) {
+        uint256 memoLength = bytes(memo).length;
+        if (borrower == address(0) || borrower == msg.sender) revert InvalidBorrower();
+        if (memoLength == 0 || memoLength > 64) revert InvalidName();
+        if (msg.value == 0) revert InvalidBond();
+        if (loanDuration < MIN_LOAN_DURATION || loanDuration > MAX_LOAN_DURATION) {
+            revert InvalidDuration();
+        }
+
+        loanId = ++moneyLoanCount;
+        moneyLoans[loanId] = MoneyLoan({
+            id: loanId,
+            lender: msg.sender,
+            borrower: borrower,
+            memo: memo,
+            amount: msg.value,
+            loanDuration: loanDuration,
+            dueAt: 0,
+            status: MoneyLoanStatus.Offered
+        });
+        lenderMoneyLoanIds[msg.sender].push(loanId);
+        borrowerMoneyLoanIds[borrower].push(loanId);
+
+        emit MoneyLoanOffered(loanId, msg.sender, borrower, memo, msg.value, loanDuration);
+    }
+
+    function acceptMoneyLoan(uint256 loanId) external nonReentrant existingMoneyLoan(loanId) {
+        MoneyLoan storage loan = moneyLoans[loanId];
+        if (msg.sender != loan.borrower) revert NotBorrower();
+        if (loan.status != MoneyLoanStatus.Offered) revert LoanUnavailable();
+
+        uint64 dueAt = uint64(block.timestamp) + loan.loanDuration;
+        loan.dueAt = dueAt;
+        loan.status = MoneyLoanStatus.Active;
+
+        (bool success, ) = msg.sender.call{value: loan.amount}("");
+        if (!success) revert TransferFailed();
+
+        emit MoneyLoanAccepted(loanId, loan.lender, msg.sender, loan.amount, dueAt);
+    }
+
+    function repayMoneyLoan(uint256 loanId) external payable nonReentrant existingMoneyLoan(loanId) {
+        MoneyLoan storage loan = moneyLoans[loanId];
+        if (msg.sender != loan.borrower) revert NotBorrower();
+        if (loan.status != MoneyLoanStatus.Active) revert LoanUnavailable();
+        if (msg.value != loan.amount) revert IncorrectRepayment();
+
+        loan.status = MoneyLoanStatus.Repaid;
+        (bool success, ) = loan.lender.call{value: msg.value}("");
+        if (!success) revert TransferFailed();
+
+        emit MoneyLoanRepaid(loanId, loan.lender, msg.sender, msg.value);
+    }
+
+    function cancelMoneyLoan(uint256 loanId) external nonReentrant existingMoneyLoan(loanId) {
+        MoneyLoan storage loan = moneyLoans[loanId];
+        if (msg.sender != loan.lender) revert NotLender();
+        if (loan.status != MoneyLoanStatus.Offered) revert LoanUnavailable();
+
+        loan.status = MoneyLoanStatus.Cancelled;
+        (bool success, ) = msg.sender.call{value: loan.amount}("");
+        if (!success) revert TransferFailed();
+
+        emit MoneyLoanCancelled(loanId, msg.sender, loan.borrower, loan.amount);
+    }
+
     function getItem(uint256 itemId) external view existingItem(itemId) returns (Item memory) {
         return items[itemId];
     }
@@ -183,5 +314,17 @@ contract BorrowBond {
 
     function getBorrowerItemIds(address borrower) external view returns (uint256[] memory) {
         return borrowerItemIds[borrower];
+    }
+
+    function getMoneyLoan(uint256 loanId) external view existingMoneyLoan(loanId) returns (MoneyLoan memory) {
+        return moneyLoans[loanId];
+    }
+
+    function getLenderMoneyLoanIds(address lender) external view returns (uint256[] memory) {
+        return lenderMoneyLoanIds[lender];
+    }
+
+    function getBorrowerMoneyLoanIds(address borrower) external view returns (uint256[] memory) {
+        return borrowerMoneyLoanIds[borrower];
     }
 }

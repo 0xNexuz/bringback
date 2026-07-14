@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import {
   ArrowDownRight,
   ArrowRight,
+  Banknote,
   Check,
   ChevronRight,
   Clock3,
@@ -24,6 +25,7 @@ import {
   createWalletClient,
   custom,
   formatEther,
+  isAddress,
   parseEther,
   type Address,
   type Hash,
@@ -32,13 +34,16 @@ import { bringBackChain, explorerUrl, publicClient } from "./lib/chain";
 import {
   borrowBondAbi,
   contractAddress,
+  type ContractMoneyLoan,
   type ContractItem,
   type ItemStatus,
+  type MoneyLoanStatus,
 } from "./lib/contract";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 type DashboardTab = "lend" | "borrowed";
+type DashboardMode = "stuff" | "money";
 type Notice = { kind: "success" | "error" | "pending"; message: string; hash?: Hash };
 
 function shortenAddress(address: string, size = 4) {
@@ -75,6 +80,14 @@ function getItemStatus(item: ContractItem): { label: string; tone: string } {
   return { label: "On loan", tone: "borrowed" };
 }
 
+function getMoneyLoanStatus(loan: ContractMoneyLoan): { label: string; tone: string } {
+  if (loan.status === 0) return { label: "Awaiting acceptance", tone: "offered" };
+  if (loan.status === 2) return { label: "Paid back", tone: "available" };
+  if (loan.status === 3) return { label: "Cancelled", tone: "retired" };
+  if (Number(loan.dueAt) * 1000 < Date.now()) return { label: "Payment overdue", tone: "overdue" };
+  return { label: "Money is out", tone: "borrowed" };
+}
+
 function parseSharedItemId() {
   const match = window.location.pathname.match(/^\/item\/(\d+)\/?$/);
   return match ? BigInt(match[1]) : undefined;
@@ -95,15 +108,35 @@ function normalizeItem(value: unknown): ContractItem {
   return { ...item, status: item.status as ItemStatus };
 }
 
+function normalizeMoneyLoan(value: unknown): ContractMoneyLoan {
+  const loan = value as {
+    id: bigint;
+    lender: Address;
+    borrower: Address;
+    memo: string;
+    amount: bigint;
+    loanDuration: bigint;
+    dueAt: bigint;
+    status: number;
+  };
+  return { ...loan, status: loan.status as MoneyLoanStatus };
+}
+
 function App() {
   const [account, setAccount] = useState<Address>();
+  const [mode, setMode] = useState<DashboardMode>(() =>
+    new URLSearchParams(window.location.search).get("mode") === "money" ? "money" : "stuff",
+  );
   const [tab, setTab] = useState<DashboardTab>("lend");
   const [lenderItems, setLenderItems] = useState<ContractItem[]>([]);
   const [borrowedItems, setBorrowedItems] = useState<ContractItem[]>([]);
+  const [moneyLent, setMoneyLent] = useState<ContractMoneyLoan[]>([]);
+  const [moneyOwed, setMoneyOwed] = useState<ContractMoneyLoan[]>([]);
   const [sharedItem, setSharedItem] = useState<ContractItem>();
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<Notice>();
   const [showCreate, setShowCreate] = useState(false);
+  const [showMoneyCreate, setShowMoneyCreate] = useState(false);
   const [qrItem, setQrItem] = useState<ContractItem>();
   const [now, setNow] = useState(Date.now());
   const sharedItemId = useMemo(parseSharedItemId, []);
@@ -160,13 +193,24 @@ function App() {
     return normalizeItem(value);
   }, []);
 
+  const readMoneyLoan = useCallback(async (loanId: bigint) => {
+    if (!contractAddress) return undefined;
+    const value = await publicClient.readContract({
+      address: contractAddress,
+      abi: borrowBondAbi,
+      functionName: "getMoneyLoan",
+      args: [loanId],
+    });
+    return normalizeMoneyLoan(value);
+  }, []);
+
   const refresh = useCallback(async () => {
     if (!contractAddress) return;
     setLoading(true);
     try {
       if (sharedItemId) setSharedItem(await readItem(sharedItemId));
       if (account) {
-        const [lenderIds, borrowerIds] = await Promise.all([
+        const [lenderIds, borrowerIds, lentMoneyIds, owedMoneyIds] = await Promise.all([
           publicClient.readContract({
             address: contractAddress,
             abi: borrowBondAbi,
@@ -179,11 +223,25 @@ function App() {
             functionName: "getBorrowerItemIds",
             args: [account],
           }),
+          publicClient.readContract({
+            address: contractAddress,
+            abi: borrowBondAbi,
+            functionName: "getLenderMoneyLoanIds",
+            args: [account],
+          }),
+          publicClient.readContract({
+            address: contractAddress,
+            abi: borrowBondAbi,
+            functionName: "getBorrowerMoneyLoanIds",
+            args: [account],
+          }),
         ]);
         const uniqueBorrowerIds = [...new Set(borrowerIds.map(String))].map(BigInt);
-        const [owned, borrowed] = await Promise.all([
+        const [owned, borrowed, lentMoney, owedMoney] = await Promise.all([
           Promise.all(lenderIds.map(readItem)),
           Promise.all(uniqueBorrowerIds.map(readItem)),
+          Promise.all(lentMoneyIds.map(readMoneyLoan)),
+          Promise.all(owedMoneyIds.map(readMoneyLoan)),
         ]);
         setLenderItems(owned.filter(Boolean) as ContractItem[]);
         setBorrowedItems(
@@ -191,13 +249,15 @@ function App() {
             (item) => item.borrower.toLowerCase() === account.toLowerCase(),
           ),
         );
+        setMoneyLent(lentMoney.filter(Boolean) as ContractMoneyLoan[]);
+        setMoneyOwed(owedMoney.filter(Boolean) as ContractMoneyLoan[]);
       }
     } catch (error) {
       setNotice({ kind: "error", message: error instanceof Error ? error.message : "Could not read contract data." });
     } finally {
       setLoading(false);
     }
-  }, [account, readItem, sharedItemId]);
+  }, [account, readItem, readMoneyLoan, sharedItemId]);
 
   useEffect(() => {
     void refresh();
@@ -208,6 +268,14 @@ function App() {
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!window.location.hash) return;
+    const frame = window.requestAnimationFrame(() => {
+      document.querySelector(window.location.hash)?.scrollIntoView({ block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
@@ -223,7 +291,21 @@ function App() {
   }, []);
 
   const transact = useCallback(
-    async (label: string, functionName: "createItem" | "borrowItem" | "confirmReturn" | "claimOverdueBond" | "retireItem", args: readonly unknown[], value?: bigint) => {
+    async (
+      label: string,
+      functionName:
+        | "createItem"
+        | "borrowItem"
+        | "confirmReturn"
+        | "claimOverdueBond"
+        | "retireItem"
+        | "createMoneyLoan"
+        | "acceptMoneyLoan"
+        | "repayMoneyLoan"
+        | "cancelMoneyLoan",
+      args: readonly unknown[],
+      value?: bigint,
+    ) => {
       if (!account || !walletClient) {
         await connect();
         return;
@@ -261,9 +343,23 @@ function App() {
     setShowCreate(false);
   };
 
+  const createMoneyLoan = async (borrower: Address, memo: string, amount: string, duration: number) => {
+    await transact(
+      "Money loan offered",
+      "createMoneyLoan",
+      [borrower, memo, BigInt(duration)],
+      parseEther(amount),
+    );
+    setShowMoneyCreate(false);
+  };
+
   const unavailableCount = lenderItems.filter((item) => item.status === 1).length;
   const overdueCount = lenderItems.filter(
     (item) => item.status === 1 && Number(item.dueAt) * 1000 < now,
+  ).length;
+  const activeMoneyCount = moneyLent.filter((loan) => loan.status === 1).length;
+  const overdueMoneyCount = moneyLent.filter(
+    (loan) => loan.status === 1 && Number(loan.dueAt) * 1000 < now,
   ).length;
 
   return (
@@ -284,9 +380,9 @@ function App() {
         <main>
           <section className="hero">
             <div className="hero-copy">
-              <div className="eyebrow"><Sparkles size={15} /> Built for things that wander</div>
-              <h1>Your stuff should <em>come back.</em></h1>
-              <p>Turn any charger, book, or power bank into a QR-tagged loan backed by a small, refundable MON bond.</p>
+              <div className="eyebrow"><Sparkles size={15} /> Built for things that wander — and money that lingers</div>
+              <h1>What you lend should <em>come back.</em></h1>
+              <p>Track anything you lend. Add a refundable bond to physical stuff, or create a clear onchain repayment for money.</p>
               <div className="hero-actions">
                 <button className="primary-button" onClick={() => account ? setShowCreate(true) : void connect()}>
                   {account ? "Tag an item" : "Start lending"}<ArrowRight size={18} />
@@ -320,45 +416,76 @@ function App() {
           <section className="dashboard-section" id="dashboard">
             <div className="section-heading">
               <div><span className="section-kicker">YOUR LENDING DESK</span><h2>Keep tabs without nagging.</h2></div>
-              {account && <button className="primary-button compact" onClick={() => setShowCreate(true)}><Plus size={17} /> Tag an item</button>}
+              {account && <button className="primary-button compact" onClick={() => mode === "stuff" ? setShowCreate(true) : setShowMoneyCreate(true)}><Plus size={17} /> {mode === "stuff" ? "Tag an item" : "Lend money"}</button>}
             </div>
 
             {!contractAddress && <SetupBanner />}
 
+            <div className="mode-switch" aria-label="Choose what you lent">
+              <button className={mode === "stuff" ? "active" : ""} onClick={() => { setMode("stuff"); setTab("lend"); }}>
+                <span><PackageCheck size={21} /></span><div><strong>Stuff</strong><small>Chargers, books, tools, anything</small></div>
+              </button>
+              <button className={mode === "money" ? "active" : ""} onClick={() => { setMode("money"); setTab("lend"); }}>
+                <span><Banknote size={21} /></span><div><strong>Money</strong><small>Personal loans with clear repayment</small></div>
+              </button>
+            </div>
+
             {!account ? (
               <div className="connect-panel">
                 <div className="connect-icon"><Wallet size={28} /></div>
-                <div><h3>Open your lending desk</h3><p>Connect a Monad wallet to create item tags and see live loans.</p></div>
+                <div><h3>Open your lending desk</h3><p>Connect a Monad wallet to see everything you lent and everything you owe.</p></div>
                 <button className="primary-button" onClick={connect}>Connect wallet <ChevronRight size={18} /></button>
               </div>
             ) : (
               <>
                 <div className="stats-row">
-                  <Stat label="Tagged items" value={lenderItems.length} detail="All-time" />
-                  <Stat label="Out right now" value={unavailableCount} detail="Active loans" />
-                  <Stat label="Need attention" value={overdueCount} detail="Past deadline" tone={overdueCount ? "alert" : undefined} />
+                  {mode === "stuff" ? <>
+                    <Stat label="Tagged items" value={lenderItems.length} detail="All-time" />
+                    <Stat label="Out right now" value={unavailableCount} detail="Active loans" />
+                    <Stat label="Need attention" value={overdueCount} detail="Past deadline" tone={overdueCount ? "alert" : undefined} />
+                  </> : <>
+                    <Stat label="Money loans" value={moneyLent.length} detail="All-time" />
+                    <Stat label="Still outstanding" value={activeMoneyCount} detail="Active repayments" />
+                    <Stat label="Need attention" value={overdueMoneyCount} detail="Past deadline" tone={overdueMoneyCount ? "alert" : undefined} />
+                  </>}
                 </div>
                 <div className="desk">
                   <div className="tabs" role="tablist">
-                    <button className={tab === "lend" ? "active" : ""} onClick={() => setTab("lend")}>Things I lend <span>{lenderItems.length}</span></button>
-                    <button className={tab === "borrowed" ? "active" : ""} onClick={() => setTab("borrowed")}>Things I borrowed <span>{borrowedItems.length}</span></button>
+                    <button className={tab === "lend" ? "active" : ""} onClick={() => setTab("lend")}>{mode === "stuff" ? "Things I lend" : "Money I lent"} <span>{mode === "stuff" ? lenderItems.length : moneyLent.length}</span></button>
+                    <button className={tab === "borrowed" ? "active" : ""} onClick={() => setTab("borrowed")}>{mode === "stuff" ? "Things I borrowed" : "Money I owe"} <span>{mode === "stuff" ? borrowedItems.length : moneyOwed.length}</span></button>
                     <button className="refresh-button" aria-label="Refresh contract data" onClick={() => void refresh()}><RefreshCw size={16} className={loading ? "spinning" : ""} /></button>
                   </div>
                   <div className="item-grid">
-                    {(tab === "lend" ? lenderItems : borrowedItems).map((item) => (
-                      <ItemCard
-                        key={item.id.toString()}
-                        item={item}
-                        ownerView={tab === "lend"}
-                        onQr={() => setQrItem(item)}
-                        onReturn={() => void transact("Return confirmed", "confirmReturn", [item.id])}
-                        onClaim={() => void transact("Overdue bond claimed", "claimOverdueBond", [item.id])}
-                        onRetire={() => void transact("Item retired", "retireItem", [item.id])}
-                      />
-                    ))}
-                    {!loading && (tab === "lend" ? lenderItems : borrowedItems).length === 0 && (
-                      <EmptyState borrowed={tab === "borrowed"} onCreate={() => setShowCreate(true)} />
-                    )}
+                    {mode === "stuff" ? <>
+                      {(tab === "lend" ? lenderItems : borrowedItems).map((item) => (
+                        <ItemCard
+                          key={item.id.toString()}
+                          item={item}
+                          ownerView={tab === "lend"}
+                          onQr={() => setQrItem(item)}
+                          onReturn={() => void transact("Return confirmed", "confirmReturn", [item.id])}
+                          onClaim={() => void transact("Overdue bond claimed", "claimOverdueBond", [item.id])}
+                          onRetire={() => void transact("Item retired", "retireItem", [item.id])}
+                        />
+                      ))}
+                      {!loading && (tab === "lend" ? lenderItems : borrowedItems).length === 0 && (
+                        <EmptyState mode="stuff" borrowed={tab === "borrowed"} onCreate={() => setShowCreate(true)} />
+                      )}
+                    </> : <>
+                      {(tab === "lend" ? moneyLent : moneyOwed).map((loan) => (
+                        <MoneyLoanCard
+                          key={loan.id.toString()}
+                          loan={loan}
+                          lenderView={tab === "lend"}
+                          onAccept={() => void transact("Money received", "acceptMoneyLoan", [loan.id])}
+                          onRepay={() => void transact("Money paid back", "repayMoneyLoan", [loan.id], loan.amount)}
+                          onCancel={() => void transact("Loan offer cancelled", "cancelMoneyLoan", [loan.id])}
+                        />
+                      ))}
+                      {!loading && (tab === "lend" ? moneyLent : moneyOwed).length === 0 && (
+                        <EmptyState mode="money" borrowed={tab === "borrowed"} onCreate={() => setShowMoneyCreate(true)} />
+                      )}
+                    </>}
                   </div>
                 </div>
               </>
@@ -366,11 +493,11 @@ function App() {
           </section>
 
           <section className="how-section" id="how-it-works">
-            <div className="how-intro"><span className="section-kicker">HOW IT WORKS</span><h2>One tiny bond.<br />Zero awkward reminders.</h2></div>
+            <div className="how-intro"><span className="section-kicker">HOW IT WORKS</span><h2>Stuff or money.<br />One clear return path.</h2></div>
             <div className="steps">
-              <Step number="01" icon={<QrCode />} title="Tag it" text="Name your item, choose a return bond and print or share its QR code." />
-              <Step number="02" icon={<Handshake />} title="Lend it" text="Your friend scans, connects their wallet and locks the exact bond on Monad." />
-              <Step number="03" icon={<PackageCheck />} title="Get it back" text="Confirm the return and the contract sends their bond straight back." />
+              <Step number="01" icon={<QrCode />} title="Choose what went out" text="Tag physical stuff with a refundable bond, or fund a money offer for one specific wallet." />
+              <Step number="02" icon={<Handshake />} title="Agree onchain" text="Your friend accepts the exact amount, return window, and terms from their own wallet." />
+              <Step number="03" icon={<PackageCheck />} title="Bring it back" text="Confirm a physical return to refund the bond, or let the borrower repay money directly onchain." />
             </div>
           </section>
         </main>
@@ -386,9 +513,10 @@ function App() {
         />
       )}
 
-      <footer><div className="brand mini"><span className="brand-mark"><RotateCcw /></span><span>BringBack</span></div><p>Built on Monad. Designed for the things your friends “forgot” they borrowed.</p></footer>
+      <footer><div className="brand mini"><span className="brand-mark"><RotateCcw /></span><span>BringBack</span></div><p>Built on Monad. For the stuff and money your friends “forgot” they borrowed.</p></footer>
 
       {showCreate && <CreateModal onClose={() => setShowCreate(false)} onSubmit={createItem} />}
+      {showMoneyCreate && <MoneyLoanModal onClose={() => setShowMoneyCreate(false)} onSubmit={createMoneyLoan} />}
       {qrItem && <QrModal item={qrItem} onClose={() => setQrItem(undefined)} />}
       {notice && <Toast notice={notice} onClose={() => setNotice(undefined)} />}
     </div>
@@ -407,8 +535,9 @@ function Step({ number, icon, title, text }: { number: string; icon: React.React
   return <article className="step-card"><div className="step-head"><span>{number}</span><i>{icon}</i></div><h3>{title}</h3><p>{text}</p></article>;
 }
 
-function EmptyState({ borrowed, onCreate }: { borrowed: boolean; onCreate: () => void }) {
-  return <div className="empty-state"><div>{borrowed ? <Handshake size={30} /> : <QrCode size={30} />}</div><h3>{borrowed ? "Nothing borrowed right now" : "Tag your first item"}</h3><p>{borrowed ? "Loans you accept will appear here automatically." : "Give something you lend a refundable return bond."}</p>{!borrowed && <button className="secondary-button" onClick={onCreate}><Plus size={16} /> Create a tag</button>}</div>;
+function EmptyState({ mode, borrowed, onCreate }: { mode: DashboardMode; borrowed: boolean; onCreate: () => void }) {
+  const money = mode === "money";
+  return <div className="empty-state"><div>{money ? <Banknote size={30} /> : borrowed ? <Handshake size={30} /> : <QrCode size={30} />}</div><h3>{borrowed ? (money ? "You don't owe anything" : "Nothing borrowed right now") : (money ? "No money out right now" : "Tag your first item")}</h3><p>{borrowed ? (money ? "Money offers addressed to your wallet will appear here." : "Loans you accept will appear here automatically.") : (money ? "Create a funded offer for someone you know." : "Give something you lend a refundable return bond.")}</p>{!borrowed && <button className="secondary-button" onClick={onCreate}><Plus size={16} /> {money ? "Lend money" : "Create a tag"}</button>}</div>;
 }
 
 function ItemCard({ item, ownerView, onQr, onReturn, onClaim, onRetire }: { item: ContractItem; ownerView: boolean; onQr: () => void; onReturn: () => void; onClaim: () => void; onRetire: () => void }) {
@@ -430,6 +559,26 @@ function ItemCard({ item, ownerView, onQr, onReturn, onClaim, onRetire }: { item
   </article>;
 }
 
+function MoneyLoanCard({ loan, lenderView, onAccept, onRepay, onCancel }: { loan: ContractMoneyLoan; lenderView: boolean; onAccept: () => void; onRepay: () => void; onCancel: () => void }) {
+  const status = getMoneyLoanStatus(loan);
+  return <article className="item-card money-card">
+    <div className="item-card-head"><span className={`status-pill ${status.tone}`}><i />{status.label}</span><span className="item-number">LOAN #{loan.id.toString().padStart(4, "0")}</span></div>
+    <div className="item-title"><div><Banknote size={23} /></div><h3>{loan.memo}</h3></div>
+    <div className="money-amount"><small>PRINCIPAL</small><strong>{formatMon(loan.amount)} <span>MON</span></strong></div>
+    <div className="item-details">
+      <div><small>{lenderView ? "BORROWER" : "LENDER"}</small><strong>{shortenAddress(lenderView ? loan.borrower : loan.lender, 5)}</strong></div>
+      <div><small>{loan.status === 1 ? "PAY BACK BY" : "REPAYMENT WINDOW"}</small><strong>{loan.status === 1 ? formatDue(loan.dueAt) : formatDuration(loan.loanDuration)}</strong></div>
+    </div>
+    <div className="card-actions">
+      {lenderView && loan.status === 0 && <button className="secondary-button" onClick={onCancel}><X size={16} /> Cancel offer</button>}
+      {lenderView && loan.status === 1 && <span className="waiting-note"><Clock3 size={15} /> Waiting for repayment</span>}
+      {!lenderView && loan.status === 0 && <button className="secondary-button success" onClick={onAccept}><ArrowDownRight size={16} /> Accept & receive</button>}
+      {!lenderView && loan.status === 1 && <button className="secondary-button success" onClick={onRepay}><RotateCcw size={16} /> Pay back {formatMon(loan.amount)} MON</button>}
+      {(loan.status === 2 || loan.status === 3) && <span className="waiting-note"><Check size={15} /> This loan is closed</span>}
+    </div>
+  </article>;
+}
+
 function CreateModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (name: string, bond: string, duration: number) => Promise<void> }) {
   const [name, setName] = useState("");
   const [bond, setBond] = useState("0.1");
@@ -447,6 +596,29 @@ function CreateModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (na
     <div className="form-grid"><label>RETURN BOND<div className="input-suffix"><input type="number" min="0.0001" step="0.0001" value={bond} onChange={(event) => setBond(event.target.value)} required /><span>MON</span></div></label><label>RETURN WINDOW<select value={duration} onChange={(event) => setDuration(Number(event.target.value))}><option value={3600}>1 hour</option><option value={86400}>1 day</option><option value={172800}>2 days</option><option value={604800}>7 days</option><option value={2592000}>30 days</option></select></label></div>
     <div className="bond-note"><ShieldCheck size={17} /><span>The contract holds the bond. BringBack can never move it.</span></div>
     <button className="primary-button full" type="submit" disabled={submitting || !name.trim()}>{submitting ? <LoaderCircle className="spinning" size={18} /> : <Plus size={18} />} Create item tag</button>
+  </form></div></div>;
+}
+
+function MoneyLoanModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (borrower: Address, memo: string, amount: string, duration: number) => Promise<void> }) {
+  const [borrower, setBorrower] = useState("");
+  const [memo, setMemo] = useState("");
+  const [amount, setAmount] = useState("0.1");
+  const [duration, setDuration] = useState(604800);
+  const [submitting, setSubmitting] = useState(false);
+  const borrowerIsValid = isAddress(borrower);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!borrowerIsValid || !memo.trim() || Number(amount) <= 0) return;
+    setSubmitting(true);
+    await onSubmit(borrower as Address, memo.trim(), amount, duration);
+    setSubmitting(false);
+  };
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="money-title"><button className="modal-close" onClick={onClose}><X /></button><span className="modal-kicker">NEW MONEY LOAN</span><h2 id="money-title">Who needs the money?</h2><p className="modal-copy">Fund a zero-interest offer. Only the wallet you name can accept and receive it.</p><form onSubmit={submit}>
+    <label>BORROWER WALLET<input autoFocus placeholder="0x..." value={borrower} onChange={(event) => setBorrower(event.target.value)} required /></label>
+    <label>WHAT IS IT FOR?<input maxLength={64} placeholder="e.g. Lunch and transport" value={memo} onChange={(event) => setMemo(event.target.value)} required /></label>
+    <div className="form-grid"><label>AMOUNT<div className="input-suffix"><input type="number" min="0.0001" step="0.0001" value={amount} onChange={(event) => setAmount(event.target.value)} required /><span>MON</span></div></label><label>PAYBACK WINDOW<select value={duration} onChange={(event) => setDuration(Number(event.target.value))}><option value={3600}>1 hour</option><option value={86400}>1 day</option><option value={172800}>2 days</option><option value={604800}>7 days</option><option value={2592000}>30 days</option></select></label></div>
+    <div className="bond-note money-note"><Banknote size={17} /><span>Your MON stays cancelable in the contract until the borrower accepts it.</span></div>
+    <button className="primary-button full" type="submit" disabled={submitting || !borrowerIsValid || !memo.trim()}>{submitting ? <LoaderCircle className="spinning" size={18} /> : <ArrowRight size={18} />} Fund loan offer</button>
   </form></div></div>;
 }
 
