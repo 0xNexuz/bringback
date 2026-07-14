@@ -13,3 +13,5 @@ work/
 outputs/
 vite.config.js
 vite.config.d.ts
+
+.vercel

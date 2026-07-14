@@ -2,6 +2,8 @@
 
 **What you lend should come back.**
 
+[Live web app](https://bringback-ebon.vercel.app) | [GitHub repository](https://github.com/0xNexuz/bringback) | [Demo script](DEMO_SCRIPT.md)
+
 BringBack is an onchain lending desk for informal loans between people who already know each other. It handles two common situations without pretending they are the same problem:
 
 - **Stuff** uses a refundable MON bond for physical items such as chargers, books, tools, clothes, controllers, and power banks.
@@ -202,10 +204,12 @@ After deployment, set the public address as `VITE_CONTRACT_ADDRESS`, rerun the t
 
 | Component | Status |
 |---|---|
-| GitHub repository | Publishing as `0xNexuz/bringback` |
-| Vercel project | Publishing as `bringback` |
+| GitHub repository | Live: [`0xNexuz/bringback`](https://github.com/0xNexuz/bringback) |
+| Vercel project | Live: [`bringback-ebon.vercel.app`](https://bringback-ebon.vercel.app) |
 | Monad Testnet contract | Not deployed from this workspace yet |
 | Monad Mainnet contract | Not deployed |
+
+The hosted site is currently an honest builder preview: the interface and direct QR routes are deployed, but contract actions remain disabled until `VITE_CONTRACT_ADDRESS` is set to a public Monad deployment.
 
 ## Demo
 
