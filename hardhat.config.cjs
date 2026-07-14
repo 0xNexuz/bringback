@@ -1,5 +1,15 @@
 require("@nomicfoundation/hardhat-toolbox");
 
+// Node 20+ can load the ignored local deployment wallet without an extra package.
+// The key is never logged or committed.
+if (typeof process.loadEnvFile === "function") {
+  try {
+    process.loadEnvFile(".env");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+
 const privateKey = process.env.DEPLOYER_PRIVATE_KEY;
 
 module.exports = {
