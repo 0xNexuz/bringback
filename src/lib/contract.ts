@@ -30,6 +30,14 @@ const moneyLoanComponents = [
 ] as const;
 
 export const borrowBondAbi = [
+  { type: "error", name: "InvalidBorrower", inputs: [] },
+  { type: "error", name: "InvalidDuration", inputs: [] },
+  { type: "error", name: "InvalidBond", inputs: [] },
+  { type: "error", name: "NotLender", inputs: [] },
+  { type: "error", name: "NotBorrower", inputs: [] },
+  { type: "error", name: "LoanUnavailable", inputs: [] },
+  { type: "error", name: "IncorrectRepayment", inputs: [] },
+  { type: "error", name: "TransferFailed", inputs: [] },
   {
     type: "function",
     name: "createItem",
