@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Handshake,
   LoaderCircle,
+  LogOut,
   PackageCheck,
   Plus,
   QrCode,
@@ -86,6 +87,20 @@ function getMoneyLoanStatus(loan: ContractMoneyLoan): { label: string; tone: str
   if (loan.status === 3) return { label: "Cancelled", tone: "retired" };
   if (Number(loan.dueAt) * 1000 < Date.now()) return { label: "Payment overdue", tone: "overdue" };
   return { label: "Money is out", tone: "borrowed" };
+}
+
+function friendlyTransactionError(error: unknown) {
+  const raw = error instanceof Error ? error.message : "Transaction failed.";
+  if (raw.includes("InvalidBorrower")) return "Use a different wallet for the borrower. You cannot lend money to your own connected wallet.";
+  if (raw.includes("InvalidDuration")) return "Choose a repayment window between 1 minute and 30 days.";
+  if (raw.includes("InvalidBond")) return "Enter an amount greater than zero.";
+  if (raw.includes("NotLender")) return "Only the lender wallet can cancel this offer.";
+  if (raw.includes("NotBorrower")) return "Only the named borrower wallet can accept or repay this loan.";
+  if (raw.includes("LoanUnavailable")) return "This loan has already been accepted, repaid, or cancelled. Refresh and try again.";
+  if (raw.includes("IncorrectRepayment")) return "The repayment must exactly match the original principal.";
+  if (/user rejected|user denied|rejected the request/i.test(raw)) return "The transaction was cancelled in your wallet.";
+  if (/insufficient funds/i.test(raw)) return "This wallet does not have enough MON for the amount plus network gas.";
+  return raw.split("\n")[0];
 }
 
 function parseSharedItemId() {
@@ -181,6 +196,24 @@ function App() {
       setNotice({ kind: "error", message: error instanceof Error ? error.message : "Wallet connection failed." });
     }
   }, [ensureCorrectNetwork]);
+
+  const disconnect = useCallback(async () => {
+    try {
+      await window.ethereum?.request({
+        method: "wallet_revokePermissions",
+        params: [{ eth_accounts: {} }],
+      });
+    } catch {
+      // Not every injected wallet implements permission revocation. Clearing
+      // local state still disconnects it from this BringBack session.
+    }
+    setAccount(undefined);
+    setLenderItems([]);
+    setBorrowedItems([]);
+    setMoneyLent([]);
+    setMoneyOwed([]);
+    setNotice({ kind: "success", message: "Wallet disconnected from BringBack." });
+  }, []);
 
   const readItem = useCallback(async (itemId: bigint) => {
     if (!contractAddress) return undefined;
@@ -279,6 +312,19 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!window.ethereum) return;
+    const restoreAuthorizedAccount = async () => {
+      try {
+        const accounts = (await window.ethereum!.request({ method: "eth_accounts" })) as Address[];
+        setAccount(accounts[0]);
+      } catch {
+        setAccount(undefined);
+      }
+    };
+    void restoreAuthorizedAccount();
+  }, []);
+
+  useEffect(() => {
     if (!window.ethereum?.on) return;
     const onAccounts = (...args: unknown[]) => setAccount((args[0] as Address[])[0]);
     const onChain = () => window.location.reload();
@@ -308,14 +354,22 @@ function App() {
     ) => {
       if (!account || !walletClient) {
         await connect();
-        return;
+        return false;
       }
       if (!contractAddress) {
         setNotice({ kind: "error", message: "The contract address has not been configured yet." });
-        return;
+        return false;
       }
       try {
         await ensureCorrectNetwork();
+        const gas = await publicClient.estimateContractGas({
+          account,
+          address: contractAddress,
+          abi: borrowBondAbi,
+          functionName,
+          args,
+          value,
+        } as never);
         setNotice({ kind: "pending", message: `${label} — confirm the transaction in your wallet.` });
         const hash = await walletClient.writeContract({
           account,
@@ -324,33 +378,41 @@ function App() {
           functionName,
           args,
           value,
+          gas: gas + gas / 5n,
           chain: bringBackChain,
         } as never);
         setNotice({ kind: "pending", message: `${label} — waiting for Monad confirmation.`, hash });
         await publicClient.waitForTransactionReceipt({ hash });
         setNotice({ kind: "success", message: `${label} complete.`, hash });
         await refresh();
+        return true;
       } catch (error) {
-        const raw = error instanceof Error ? error.message : "Transaction failed.";
-        setNotice({ kind: "error", message: raw.split("\n")[0] });
+        setNotice({ kind: "error", message: friendlyTransactionError(error) });
+        return false;
       }
     },
     [account, connect, ensureCorrectNetwork, refresh, walletClient],
   );
 
   const createItem = async (name: string, bond: string, duration: number) => {
-    await transact("Item created", "createItem", [name, parseEther(bond), BigInt(duration)]);
-    setShowCreate(false);
+    const completed = await transact("Item created", "createItem", [name, parseEther(bond), BigInt(duration)]);
+    if (completed) setShowCreate(false);
+    return completed;
   };
 
   const createMoneyLoan = async (borrower: Address, memo: string, amount: string, duration: number) => {
-    await transact(
+    if (account?.toLowerCase() === borrower.toLowerCase()) {
+      setNotice({ kind: "error", message: "Use a different wallet for the borrower. You cannot lend money to yourself." });
+      return false;
+    }
+    const completed = await transact(
       "Money loan offered",
       "createMoneyLoan",
       [borrower, memo, BigInt(duration)],
       parseEther(amount),
     );
-    setShowMoneyCreate(false);
+    if (completed) setShowMoneyCreate(false);
+    return completed;
   };
 
   const unavailableCount = lenderItems.filter((item) => item.status === 1).length;
@@ -370,10 +432,13 @@ function App() {
           <span>BringBack</span>
         </a>
         <div className="network-chip"><span />{bringBackChain.testnet ? "Monad testnet" : "Monad mainnet"}</div>
-        <button className="wallet-button" onClick={connect}>
-          <Wallet size={17} />
-          {account ? shortenAddress(account) : "Connect wallet"}
-        </button>
+        <div className="wallet-actions">
+          <button className="wallet-button" onClick={connect} disabled={Boolean(account)} aria-label={account ? `Connected wallet ${account}` : "Connect wallet"}>
+            <Wallet size={17} />
+            {account ? shortenAddress(account) : "Connect wallet"}
+          </button>
+          <button className="disconnect-button" onClick={() => void disconnect()} disabled={!account} aria-label={account ? "Disconnect wallet" : "No wallet connected"} title={account ? "Disconnect wallet" : "Connect a wallet first"}><LogOut size={16} /> Disconnect</button>
+        </div>
       </header>
 
       {!sharedItemId && (
@@ -516,7 +581,7 @@ function App() {
       <footer><div className="brand mini"><span className="brand-mark"><RotateCcw /></span><span>BringBack</span></div><p>Built on Monad. For the stuff and money your friends “forgot” they borrowed.</p></footer>
 
       {showCreate && <CreateModal onClose={() => setShowCreate(false)} onSubmit={createItem} />}
-      {showMoneyCreate && <MoneyLoanModal onClose={() => setShowMoneyCreate(false)} onSubmit={createMoneyLoan} />}
+      {showMoneyCreate && <MoneyLoanModal account={account} onClose={() => setShowMoneyCreate(false)} onSubmit={createMoneyLoan} />}
       {qrItem && <QrModal item={qrItem} onClose={() => setQrItem(undefined)} />}
       {notice && <Toast notice={notice} onClose={() => setNotice(undefined)} />}
     </div>
@@ -570,7 +635,7 @@ function MoneyLoanCard({ loan, lenderView, onAccept, onRepay, onCancel }: { loan
       <div><small>{loan.status === 1 ? "PAY BACK BY" : "REPAYMENT WINDOW"}</small><strong>{loan.status === 1 ? formatDue(loan.dueAt) : formatDuration(loan.loanDuration)}</strong></div>
     </div>
     <div className="card-actions">
-      {lenderView && loan.status === 0 && <button className="secondary-button" onClick={onCancel}><X size={16} /> Cancel offer</button>}
+      {lenderView && loan.status === 0 && <button className="danger-button" onClick={onCancel}><RotateCcw size={16} /> Cancel & refund {formatMon(loan.amount)} MON</button>}
       {lenderView && loan.status === 1 && <span className="waiting-note"><Clock3 size={15} /> Waiting for repayment</span>}
       {!lenderView && loan.status === 0 && <button className="secondary-button success" onClick={onAccept}><ArrowDownRight size={16} /> Accept & receive</button>}
       {!lenderView && loan.status === 1 && <button className="secondary-button success" onClick={onRepay}><RotateCcw size={16} /> Pay back {formatMon(loan.amount)} MON</button>}
@@ -579,7 +644,7 @@ function MoneyLoanCard({ loan, lenderView, onAccept, onRepay, onCancel }: { loan
   </article>;
 }
 
-function CreateModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (name: string, bond: string, duration: number) => Promise<void> }) {
+function CreateModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (name: string, bond: string, duration: number) => Promise<boolean> }) {
   const [name, setName] = useState("");
   const [bond, setBond] = useState("0.1");
   const [duration, setDuration] = useState(172800);
@@ -599,26 +664,27 @@ function CreateModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (na
   </form></div></div>;
 }
 
-function MoneyLoanModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (borrower: Address, memo: string, amount: string, duration: number) => Promise<void> }) {
+function MoneyLoanModal({ account, onClose, onSubmit }: { account?: Address; onClose: () => void; onSubmit: (borrower: Address, memo: string, amount: string, duration: number) => Promise<boolean> }) {
   const [borrower, setBorrower] = useState("");
   const [memo, setMemo] = useState("");
   const [amount, setAmount] = useState("0.1");
   const [duration, setDuration] = useState(604800);
   const [submitting, setSubmitting] = useState(false);
   const borrowerIsValid = isAddress(borrower);
+  const borrowerIsSelf = Boolean(borrowerIsValid && account && borrower.toLowerCase() === account.toLowerCase());
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!borrowerIsValid || !memo.trim() || Number(amount) <= 0) return;
+    if (!borrowerIsValid || borrowerIsSelf || !memo.trim() || Number(amount) <= 0) return;
     setSubmitting(true);
     await onSubmit(borrower as Address, memo.trim(), amount, duration);
     setSubmitting(false);
   };
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="money-title"><button className="modal-close" onClick={onClose}><X /></button><span className="modal-kicker">NEW MONEY LOAN</span><h2 id="money-title">Who needs the money?</h2><p className="modal-copy">Fund a zero-interest offer. Only the wallet you name can accept and receive it.</p><form onSubmit={submit}>
-    <label>BORROWER WALLET<input autoFocus placeholder="0x..." value={borrower} onChange={(event) => setBorrower(event.target.value)} required /></label>
+    <label>BORROWER WALLET<input autoFocus placeholder="0x..." value={borrower} onChange={(event) => setBorrower(event.target.value)} aria-invalid={borrowerIsSelf} required />{borrowerIsSelf && <span className="field-error">Use a second wallet—the lender and borrower cannot be the same address.</span>}</label>
     <label>WHAT IS IT FOR?<input maxLength={64} placeholder="e.g. Lunch and transport" value={memo} onChange={(event) => setMemo(event.target.value)} required /></label>
     <div className="form-grid"><label>AMOUNT<div className="input-suffix"><input type="number" min="0.0001" step="0.0001" value={amount} onChange={(event) => setAmount(event.target.value)} required /><span>MON</span></div></label><label>PAYBACK WINDOW<select value={duration} onChange={(event) => setDuration(Number(event.target.value))}><option value={3600}>1 hour</option><option value={86400}>1 day</option><option value={172800}>2 days</option><option value={604800}>7 days</option><option value={2592000}>30 days</option></select></label></div>
     <div className="bond-note money-note"><Banknote size={17} /><span>Your MON stays cancelable in the contract until the borrower accepts it.</span></div>
-    <button className="primary-button full" type="submit" disabled={submitting || !borrowerIsValid || !memo.trim()}>{submitting ? <LoaderCircle className="spinning" size={18} /> : <ArrowRight size={18} />} Fund loan offer</button>
+    <button className="primary-button full" type="submit" disabled={submitting || !borrowerIsValid || borrowerIsSelf || !memo.trim()}>{submitting ? <LoaderCircle className="spinning" size={18} /> : <ArrowRight size={18} />} Fund loan offer</button>
   </form></div></div>;
 }
 
