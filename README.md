@@ -211,9 +211,7 @@ After deployment, set the public address as `VITE_CONTRACT_ADDRESS`, rerun the t
 
 The hosted site is currently an honest builder preview: the interface and direct QR routes are deployed, but contract actions remain disabled until `VITE_CONTRACT_ADDRESS` is set to a public Monad deployment.
 
-## Demo
 
-The complete shot list, spoken narration, wallet preparation, and timing are kept separately in [`DEMO_SCRIPT.md`](DEMO_SCRIPT.md).
 
 ## License
 
