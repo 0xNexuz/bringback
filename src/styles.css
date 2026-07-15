@@ -228,7 +228,7 @@ footer p { color: var(--muted); font-size: 12px; }
   .brand-mark { width: 30px; height: 30px; }
   .wallet-button { padding: 10px 12px; font-size: 0; }
   .wallet-button svg { width: 18px; }
-  .disconnect-button { width: 40px; height: 40px; justify-content: center; padding: 0; font-size: 0; }
+  .disconnect-button { min-height: 40px; justify-content: center; padding: 0 11px; font-size: 11px; }
   .hero { min-height: auto; padding: 45px 20px 65px; }
   .hero-copy { width: 100%; overflow: hidden; }
   .hero h1 { max-width: 100%; font-size: clamp(48px, 14vw, 56px); overflow-wrap: break-word; }
