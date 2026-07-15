@@ -1,7 +1,17 @@
-import { createPublicClient, defineChain, http } from "viem";
+import { createPublicClient, defineChain, fallback, http } from "viem";
 
 const configuredChainId = Number(import.meta.env.VITE_CHAIN_ID || 10143);
 const isMainnet = configuredChainId === 143;
+const configuredRpc =
+  import.meta.env.VITE_RPC_URL ||
+  (isMainnet ? "https://rpc.monad.xyz" : "https://rpc.ankr.com/monad_testnet");
+const rpcUrls = isMainnet
+  ? [configuredRpc]
+  : [...new Set([
+      configuredRpc,
+      "https://monad-testnet.api.onfinality.io/public",
+      "https://rpc-testnet.monadinfra.com",
+    ])];
 
 export const bringBackChain = defineChain({
   id: configuredChainId,
@@ -9,10 +19,7 @@ export const bringBackChain = defineChain({
   nativeCurrency: { name: "Monad", symbol: "MON", decimals: 18 },
   rpcUrls: {
     default: {
-      http: [
-        import.meta.env.VITE_RPC_URL ||
-          (isMainnet ? "https://rpc.monad.xyz" : "https://rpc.testnet.monad.xyz"),
-      ],
+      http: rpcUrls,
     },
   },
   blockExplorers: {
@@ -26,7 +33,11 @@ export const bringBackChain = defineChain({
 
 export const publicClient = createPublicClient({
   chain: bringBackChain,
-  transport: http(),
+  ccipRead: false,
+  transport: fallback(
+    rpcUrls.map((url) => http(url, { retryCount: 1, timeout: 10_000 })),
+    { rank: false },
+  ),
 });
 
 export const explorerUrl = bringBackChain.blockExplorers.default.url;
