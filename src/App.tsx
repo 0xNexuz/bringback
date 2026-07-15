@@ -312,6 +312,19 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!window.ethereum) return;
+    const restoreAuthorizedAccount = async () => {
+      try {
+        const accounts = (await window.ethereum!.request({ method: "eth_accounts" })) as Address[];
+        setAccount(accounts[0]);
+      } catch {
+        setAccount(undefined);
+      }
+    };
+    void restoreAuthorizedAccount();
+  }, []);
+
+  useEffect(() => {
     if (!window.ethereum?.on) return;
     const onAccounts = (...args: unknown[]) => setAccount((args[0] as Address[])[0]);
     const onChain = () => window.location.reload();
@@ -424,7 +437,7 @@ function App() {
             <Wallet size={17} />
             {account ? shortenAddress(account) : "Connect wallet"}
           </button>
-          {account && <button className="disconnect-button" onClick={() => void disconnect()}><LogOut size={16} /> Disconnect</button>}
+          <button className="disconnect-button" onClick={() => void disconnect()} disabled={!account} aria-label={account ? "Disconnect wallet" : "No wallet connected"} title={account ? "Disconnect wallet" : "Connect a wallet first"}><LogOut size={16} /> Disconnect</button>
         </div>
       </header>
 
