@@ -2,7 +2,7 @@
 
 **What you lend should come back.**
 
-[Live web app](https://bringback-ebon.vercel.app) | [GitHub repository](https://github.com/0xNexuz/bringback) | [Demo script](DEMO_SCRIPT.md)
+[Live web app](https://bringback-ebon.vercel.app) | [GitHub repository](https://github.com/0xNexuz/bringback) | 
 
 BringBack is an onchain lending desk for informal loans between people who already know each other. It handles two common situations without pretending they are the same problem:
 
