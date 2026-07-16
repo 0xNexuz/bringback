@@ -136,7 +136,6 @@ src/App.tsx                  Wallet flows, dashboards, forms, and QR route
 src/lib/contract.ts          Typed contract ABI and client data models
 src/lib/chain.ts             Monad network and public client configuration
 src/styles.css               Responsive visual system
-DEMO_SCRIPT.md               Standalone sub-three-minute recording script
 ```
 
 ## Technology
