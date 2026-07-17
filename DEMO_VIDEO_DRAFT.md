@@ -5,7 +5,7 @@ Format: 16:9, 1080p, captioned
 Target length: **2 minutes 45 seconds**
 Maximum allowed length: **under 3 minutes**
 
-This is the edit/storyboard draft. The exact recording narration is in [`DEMO_SCRIPT.md`](DEMO_SCRIPT.md).
+This is the edit/storyboard draft for the public demo video.
 
 ## Story arc
 

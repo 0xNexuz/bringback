@@ -2,7 +2,7 @@
 
 **What you lend should come back.**
 
-[Live web app](https://bringback-ebon.vercel.app) | [Testnet contract](https://testnet.monadscan.com/address/0xC8c563F8e2fe16ce84669e2f4BDBC186f1eB1c5c) | [GitHub repository](https://github.com/0xNexuz/bringback) | [Demo script](DEMO_SCRIPT.md)
+[Live web app](https://bringback-ebon.vercel.app) | [Testnet contract](https://testnet.monadscan.com/address/0xC8c563F8e2fe16ce84669e2f4BDBC186f1eB1c5c) | [GitHub repository](https://github.com/0xNexuz/bringback)
 
 BringBack is an onchain lending desk for informal loans between people who already know each other. It handles two common situations without pretending they are the same problem:
 
@@ -136,7 +136,6 @@ src/App.tsx                  Wallet flows, dashboards, forms, and QR route
 src/lib/contract.ts          Typed contract ABI and client data models
 src/lib/chain.ts             Monad network and public client configuration
 src/styles.css               Responsive visual system
-DEMO_SCRIPT.md               Standalone sub-three-minute recording script
 DEMO_VIDEO_DRAFT.md          Video storyboard and edit plan
 TWEET_DRAFT.md               Primary launch post and optional reply thread
 ```
@@ -208,14 +207,10 @@ After deployment, set the public address as `VITE_CONTRACT_ADDRESS`, rerun the t
 |---|---|
 | GitHub repository | Live: [`0xNexuz/bringback`](https://github.com/0xNexuz/bringback) |
 | Vercel project | Live: [`bringback-ebon.vercel.app`](https://bringback-ebon.vercel.app) |
-| Monad Testnet contract | Live: [`0xC8c5...1c5c`](https://testnet.monadscan.com/address/0xC8c563F8e2fe16ce84669e2f4BDBC186f1eB1c5c) |
+| Monad Testnet contract | Live: [`0xC8c563F8e2fe16ce84669e2f4BDBC186f1eB1c5c`](https://testnet.monadscan.com/address/0xC8c563F8e2fe16ce84669e2f4BDBC186f1eB1c5c) |
 | Monad Mainnet contract | Not deployed |
 
 The hosted app is configured for Monad Testnet chain ID `10143` and the deployed `BorrowBond` contract at `0xC8c563F8e2fe16ce84669e2f4BDBC186f1eB1c5c`. Contract bytecode and the initial zero-item state were read back from the network after deployment. Connect an injected wallet on Monad Testnet to create and complete real Stuff and Money flows.
-
-## Demo
-
-The complete shot list, spoken narration, wallet preparation, and timing are kept separately in [`DEMO_SCRIPT.md`](DEMO_SCRIPT.md).
 
 ## License
 
